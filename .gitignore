@@ -1,0 +1,6 @@
+# Ignorar executáveis e binários
+*.exe
+vcomp
+
+# Ignorar os intermediários gerados pelo vcomp
+*.cpp
