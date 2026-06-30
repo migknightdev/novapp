@@ -1,6 +1,8 @@
-# Ignorar executáveis e binários
+# Ignorar executáveis binários
 *.exe
 vcomp
 
-# Ignorar os intermediários gerados pelo vcomp
+# Ignorar apenas os arquivos intermediários gerados pelo vcomp nos testes
+# Mas manter o código-fonte principal a salvo:
 *.cpp
+!vcomp.cpp
