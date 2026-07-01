@@ -6,7 +6,7 @@
 #include <cstdio> // Required for std::remove to clean up intermediate files
 
 // Compiler metadata
-const std::string COMPILER_VERSION = "0.1.95-alpha";
+const std::string COMPILER_VERSION = "0.2.2-beta";
 const std::string COMPILER_NAME = "vcomp";
 
 /**
@@ -60,14 +60,14 @@ int main(int argc, char* argv[]) {
     }
 
     // --- FILE INGESTION & VALIDATION ---
-    std::string line;
+    std::string raw_line;
     bool has_nova_include = false;
     std::vector<std::string> file_lines;
 
-    while (std::getline(input_file, line)) {
-        file_lines.push_back(line);
-        std::string check_line = trim(line);
-        if (check_line.rfind("#include <nova>", 0) == 0) {
+    while (std::getline(input_file, raw_line)) {
+        file_lines.push_back(raw_line);
+        std::string check_line = trim(raw_line);
+        if (check_line.find("#include <nova>") != std::string::npos) {
             has_nova_include = true;
         }
     }
@@ -80,24 +80,41 @@ int main(int argc, char* argv[]) {
     }
     // ------------------------------------
 
-    std::vector<std::string> cpp_lines;
-    
+    std::vector<std::string> cpp_global_lines; // For structures, functions and custom blocks
+    std::vector<std::string> cpp_main_lines;   // Procedural commands that MUST execute inside main()
+
     // Inject C++ Standard Library boilerplate
-    cpp_lines.push_back("#include <iostream>");
-    cpp_lines.push_back("#include <string>");
-    cpp_lines.push_back("#include <cstdlib>");
-    cpp_lines.push_back("#include <clocale>"); // Required for UTF-8 character encoding support
-    cpp_lines.push_back("\n// Variadic template helper for the 'pf' utility function");
-    cpp_lines.push_back("template <typename... Args>");
-    cpp_lines.push_back("void pf(Args... args) { (std::cout << ... << args) << \"\\n\"; }\n");
+    cpp_global_lines.push_back("#include <iostream>");
+    cpp_global_lines.push_back("#include <string>");
+    cpp_global_lines.push_back("#include <cstdlib>");
+    cpp_global_lines.push_back("#include <clocale>"); // Required for UTF-8 character encoding support
+    cpp_global_lines.push_back("\n// Variadic template helper for the 'pf' utility function");
+    cpp_global_lines.push_back("template <typename... Args>");
+    cpp_global_lines.push_back("void pf(Args... args) { (std::cout << ... << args) << \"\\n\"; }\n");
 
     bool is_no_main = false;
+    bool inside_function = false;
+    int function_brace_count = 0;
 
     // Parse Nova++ source code and transpile to standard C++
     for (size_t i = 0; i < file_lines.size(); ++i) {
-        size_t current_line_num = i + 1; // Human-readable 1-based line index
-        line = trim(file_lines[i]);
+        size_t current_line_num = i + 1;
+        std::string original_line = file_lines[i];
+        std::string line = trim(original_line);
         if (line.empty()) continue;
+
+        // Ignorar declarações manuais redundantes de int main para evitar duplicidade estrutural
+        if (line.find("int main()") != std::string::npos) {
+            is_no_main = true;
+            continue;
+        }
+
+        // Preservar a indentação original capturando os espaços iniciais
+        std::string leading_spaces = "";
+        size_t first_non_blank = original_line.find_first_not_of(" \t\r\n");
+        if (first_non_blank != std::string::npos && first_non_blank > 0) {
+            leading_spaces = original_line.substr(0, first_non_blank);
+        }
 
         // Extract inline comments
         std::string comment = "";
@@ -108,28 +125,56 @@ int main(int argc, char* argv[]) {
         }
 
         // 1. Skip boilerplate directive
-        if (line.rfind("#include <nova>", 0) == 0) {
+        if (line.find("#include <nova>") != std::string::npos) {
             continue;
         }
 
         // 2. Transpile entry point directive
         if (line == "using noMain") {
             is_no_main = true;
-            cpp_lines.push_back("int main() {");
-            cpp_lines.push_back("    std::setlocale(LC_ALL, \".UTF8\"); // Enforce UTF-8 runtime environment");
             continue;
         }
 
-        // 3. Transpile exit statement
+        // 3. Transpile custom functions declaration
+        if (line.rfind("func ", 0) == 0) {
+            inside_function = true;
+            function_brace_count = 0;
+            std::string func_decl = line.substr(5); // Remove "func "
+
+            if (line.find("{") != std::string::npos) {
+                function_brace_count++;
+            }
+
+            std::string translated_func = leading_spaces + "void " + func_decl;
+            cpp_global_lines.push_back(translated_func + comment);
+            continue;
+        }
+
+        // Rastreamento dinâmico de balanceamento de chaves para funções de escopo global.
+        // FIX: em vez de apenas checar se a linha "contém" um '{', agora contamos o saldo
+        // líquido de chaves abertas menos chaves fechadas na MESMA linha. Isso corrige o
+        // bug em que linhas como "} else {" ou "} elif (...) {" incrementavam o contador
+        // sem nunca compensar o fechamento, fazendo 'inside_function' nunca voltar a false.
+        if (inside_function) {
+            int open_braces  = static_cast<int>(std::count(line.begin(), line.end(), '{'));
+            int close_braces = static_cast<int>(std::count(line.begin(), line.end(), '}'));
+            function_brace_count += (open_braces - close_braces);
+        }
+
+        // Seleciona o vetor alvo baseado no escopo ativo atual
+        std::vector<std::string>& current_target_vector = (inside_function) ? cpp_global_lines : cpp_main_lines;
+        std::string scope_indentation = (!inside_function) ? "    " : "";
+
+        // 4. Transpile exit statement
         if (line.rfind("exit ", 0) == 0) {
             std::string val = line.substr(5);
             if (!val.empty() && val.back() == ';') val.pop_back();
-            cpp_lines.push_back("    std::system(\"pause\");");
-            cpp_lines.push_back("    return " + trim(val) + ";" + comment);
+            current_target_vector.push_back(scope_indentation + leading_spaces + "std::system(\"pause\");");
+            current_target_vector.push_back(scope_indentation + leading_spaces + "return " + trim(val) + ";" + comment);
             continue;
         }
 
-        // 4. Transpile print function 'pf'
+        // 5. Transpile print function 'pf'
         if (line.rfind("pf ", 0) == 0) {
             std::string content = line.substr(3);
             if (!content.empty() && content.back() == ';') content.pop_back();
@@ -137,7 +182,6 @@ int main(int argc, char* argv[]) {
 
             if (content.empty()) {
                 std::cerr << "[SYNTAX ERROR] Line " << current_line_num << ": 'pf' function requires arguments.\n";
-                std::cerr << " -> Statement: \"" << file_lines[i] << "\"\n";
                 return 1;
             }
 
@@ -145,11 +189,11 @@ int main(int argc, char* argv[]) {
                 content = replace_all(content, "+", ",");
             }
 
-            cpp_lines.push_back("    pf(" + content + ");" + comment);
+            current_target_vector.push_back(scope_indentation + leading_spaces + "pf(" + content + ");" + comment);
             continue;
         }
 
-        // 5. Transpile input function 'input'
+        // 6. Transpile input function 'input'
         if (line.rfind("input ", 0) == 0) {
             std::string var_target = line.substr(6);
             if (!var_target.empty() && var_target.back() == ';') var_target.pop_back();
@@ -157,34 +201,51 @@ int main(int argc, char* argv[]) {
 
             if (var_target.empty()) {
                 std::cerr << "[SYNTAX ERROR] Line " << current_line_num << ": 'input' requires a target variable.\n";
-                std::cerr << " -> Statement: \"" << file_lines[i] << "\"\n";
                 return 1;
             }
 
-            cpp_lines.push_back("    std::cin >> " + var_target + ";" + comment);
+            current_target_vector.push_back(scope_indentation + leading_spaces + "std::cin >> " + var_target + ";" + comment);
             continue;
         }
 
-        // 6. Transpile conditional structures (if, elif, else)
+        // 7. Transpile conditional structures (if, elif, else)
         if (line.rfind("if ", 0) == 0 || line.rfind("if(", 0) == 0 || line.find("} if") != std::string::npos) {
-            cpp_lines.push_back("    " + line + comment);
+            current_target_vector.push_back(scope_indentation + leading_spaces + line + comment);
             continue;
         }
         if (line.find("elif") != std::string::npos) {
             std::string translation = replace_all(line, "elif", "else if");
-            cpp_lines.push_back("    " + translation + comment);
+            current_target_vector.push_back(scope_indentation + leading_spaces + translation + comment);
             continue;
         }
         if (line.find("else") != std::string::npos) {
-            cpp_lines.push_back("    " + line + comment);
-            continue;
-        }
-        if (line == "}") {
-            cpp_lines.push_back("    }" + comment);
+            current_target_vector.push_back(scope_indentation + leading_spaces + line + comment);
             continue;
         }
 
-        // 7. Transpile variable assignments and type inference (=)
+        // Scope closing tracking
+        if (line == "}") {
+            if (inside_function) {
+                // FIX: o decremento de function_brace_count já foi feito acima, no bloco
+                // de balanceamento geral. Removido o decremento duplicado que existia aqui
+                // para não contar a mesma chave duas vezes.
+                cpp_global_lines.push_back(leading_spaces + "}" + comment);
+                if (function_brace_count <= 0) {
+                    inside_function = false;
+                }
+            } else {
+                cpp_main_lines.push_back(scope_indentation + leading_spaces + "}" + comment);
+            }
+            continue;
+        }
+
+        // Universal open-brace safety passing
+        if (line == "{") {
+            current_target_vector.push_back(scope_indentation + leading_spaces + line + comment);
+            continue;
+        }
+
+        // 8. Transpile variable assignments and type inference (=)
         size_t eq_pos = line.find("=");
         if (eq_pos != std::string::npos && line.rfind("if", 0) != 0 && line.rfind("elif", 0) != 0) {
             std::string check_comparison = line.substr(eq_pos, 2);
@@ -195,7 +256,6 @@ int main(int argc, char* argv[]) {
 
                 if (var_name.empty() || var_val.empty()) {
                     std::cerr << "[SYNTAX ERROR] Line " << current_line_num << ": Malformed variable assignment.\n";
-                    std::cerr << " -> Statement: \"" << file_lines[i] << "\"\n";
                     return 1;
                 }
 
@@ -203,31 +263,51 @@ int main(int argc, char* argv[]) {
                 bool is_bool = (var_val == "true" || var_val == "false");
                 bool has_quotes = (!var_val.empty() && var_val.front() == '"' && var_val.back() == '"');
 
-                if (!is_digit && !is_bool && !has_quotes && var_val.find_first_of("+-*/") == std::string::npos) {
-                    var_val = "\"" + var_val + "\"";
+                if (has_quotes) {
+                    current_target_vector.push_back(scope_indentation + leading_spaces + "std::string " + var_name + " = " + var_val + ";" + comment);
+                } else {
+                    if (!is_digit && !is_bool && var_val.find_first_of("+-*/") == std::string::npos) {
+                        var_val = "\"" + var_val + "\"";
+                        current_target_vector.push_back(scope_indentation + leading_spaces + "std::string " + var_name + " = " + var_val + ";" + comment);
+                    } else {
+                        current_target_vector.push_back(scope_indentation + leading_spaces + "auto " + var_name + " = " + var_val + ";" + comment);
+                    }
                 }
-
-                cpp_lines.push_back("    auto " + var_name + " = " + var_val + ";" + comment);
                 continue;
             }
         }
 
-        // Append standard syntax safely
+        // Append standard fallback syntax
         if (!line.empty()) {
             if (line.back() != ';' && line.back() != '{' && line.back() != '}') {
                 line += ";";
             }
-            cpp_lines.push_back("    " + line + comment);
+            current_target_vector.push_back(scope_indentation + leading_spaces + line + comment);
         }
     }
 
-    // Append system pause hook before scope termination if necessary
-    if (is_no_main) {
-        cpp_lines.push_back("    std::system(\"pause\");");
-        cpp_lines.push_back("}");
+    // --- STRUCTURAL RECONSTRUCTION ---
+    std::vector<std::string> cpp_lines = cpp_global_lines;
+
+    cpp_lines.push_back("\nint main() {");
+    cpp_lines.push_back("    std::setlocale(LC_ALL, \".UTF8\"); // Enforce UTF-8 runtime environment");
+
+    // Filtra e injeta apenas comandos válidos dentro da main (ignora chaves órfãs que fecharam a main fictícia no nvpp)
+    for (const auto& main_l : cpp_main_lines) {
+        std::string trimmed_l = trim(main_l);
+        if (trimmed_l == "}" || trimmed_l == "};") {
+            // Se for apenas uma chave fechando um bloco procedural solto, pulamos para evitar fechar a main antes da hora
+            continue;
+        }
+        cpp_lines.push_back(main_l);
     }
 
-    // Write translated source to intermediate C++ file
+    if (is_no_main) {
+        cpp_lines.push_back("    std::system(\"pause\");");
+    }
+    cpp_lines.push_back("    return 0;");
+    cpp_lines.push_back("}");
+
     std::string output_filename = argument.substr(0, argument.find_last_of(".")) + ".cpp";
     std::ofstream output_file(output_filename);
     for (const auto& l : cpp_lines) {
@@ -237,18 +317,16 @@ int main(int argc, char* argv[]) {
 
     std::cout << "[VCOMP] Successfully generated intermediate target: " << output_filename << "\n";
 
-    // Invoke host GCC system compiler to build the target binary
     std::string binary_name = argument.substr(0, argument.find_last_of("."));
     std::string compile_cmd = "g++ " + output_filename + " -o " + binary_name;
-    
+
     if (std::system(compile_cmd.c_str()) != 0) {
         std::cerr << "[ERROR] Downstream GCC compilation failed.\n";
         return 1;
     }
-    
+
     std::cout << "[VCOMP] Compilation successful. Binary generated: '" << binary_name << "'\n";
 
-    // Clean up: Delete the intermediate .cpp file now that binary is ready
     if (std::remove(output_filename.c_str()) != 0) {
         std::cerr << "[WARNING] Failed to clean up intermediate file: " << output_filename << "\n";
     } else {
