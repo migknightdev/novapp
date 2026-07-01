@@ -6,7 +6,7 @@
 #include <cstdio> // Required for std::remove to clean up intermediate files
 
 // Compiler metadata
-const std::string COMPILER_VERSION = "0.2.2-beta(bugfix-1)";
+const std::string COMPILER_VERSION = "0.2.2-beta(bugfix-2)";
 const std::string COMPILER_NAME = "vcomp";
 
 /**
@@ -95,6 +95,12 @@ int main(int argc, char* argv[]) {
     bool is_no_main = false;
     bool inside_function = false;
     int function_brace_count = 0;
+    // Rastreamento do main() declarado manualmente pelo usuário (fora do fluxo 'noMain').
+    // Precisamos saber exatamente qual '}' fecha esse main manual para poder descartar
+    // SOMENTE essa chave específica, sem afetar chaves legítimas de if/elif/else
+    // aninhados no escopo procedural.
+    bool manual_main_detected = false;
+    int manual_main_brace_balance = 0;
 
     // Parse Nova++ source code and transpile to standard C++
     for (size_t i = 0; i < file_lines.size(); ++i) {
@@ -106,6 +112,10 @@ int main(int argc, char* argv[]) {
         // Ignorar declarações manuais redundantes de int main para evitar duplicidade estrutural
         if (line.find("int main()") != std::string::npos) {
             is_no_main = true;
+            manual_main_detected = true;
+            int open_b = static_cast<int>(std::count(line.begin(), line.end(), '{'));
+            int close_b = static_cast<int>(std::count(line.begin(), line.end(), '}'));
+            manual_main_brace_balance += (open_b - close_b);
             continue;
         }
 
@@ -155,10 +165,22 @@ int main(int argc, char* argv[]) {
         // líquido de chaves abertas menos chaves fechadas na MESMA linha. Isso corrige o
         // bug em que linhas como "} else {" ou "} elif (...) {" incrementavam o contador
         // sem nunca compensar o fechamento, fazendo 'inside_function' nunca voltar a false.
+        bool is_manual_main_closing_brace = false;
         if (inside_function) {
             int open_braces  = static_cast<int>(std::count(line.begin(), line.end(), '{'));
             int close_braces = static_cast<int>(std::count(line.begin(), line.end(), '}'));
             function_brace_count += (open_braces - close_braces);
+        } else if (manual_main_detected && manual_main_brace_balance > 0) {
+            // Mesma lógica de saldo líquido, mas aplicada ao main() manual em vez de a
+            // uma func. Só marcamos a linha para descarte quando o saldo VOLTA a zero
+            // E a linha é exatamente '}' isolado — assim if/elif/else aninhados (que
+            // sempre mantêm saldo positivo até fecharem de verdade) nunca são afetados.
+            int open_braces  = static_cast<int>(std::count(line.begin(), line.end(), '{'));
+            int close_braces = static_cast<int>(std::count(line.begin(), line.end(), '}'));
+            manual_main_brace_balance += (open_braces - close_braces);
+            if (manual_main_brace_balance <= 0 && line == "}") {
+                is_manual_main_closing_brace = true;
+            }
         }
 
         // Seleciona o vetor alvo baseado no escopo ativo atual
@@ -260,6 +282,10 @@ int main(int argc, char* argv[]) {
                 if (function_brace_count <= 0) {
                     inside_function = false;
                 }
+            } else if (is_manual_main_closing_brace) {
+                // Esta é exatamente a chave que fecha o int main() escrito manualmente
+                // pelo usuário — descartamos só ela, não qualquer '}' solto.
+                continue;
             } else {
                 cpp_main_lines.push_back(scope_indentation + leading_spaces + "}" + comment);
             }
@@ -319,13 +345,12 @@ int main(int argc, char* argv[]) {
     cpp_lines.push_back("\nint main() {");
     cpp_lines.push_back("    std::setlocale(LC_ALL, \".UTF8\"); // Enforce UTF-8 runtime environment");
 
-    // Filtra e injeta apenas comandos válidos dentro da main (ignora chaves órfãs que fecharam a main fictícia no nvpp)
+    // FIX: removido o filtro que descartava cegamente QUALQUER linha igual a '}' ou '};'.
+    // Esse filtro apagava chaves de fechamento legítimas de if/elif/else aninhados no
+    // escopo procedural (main), causando erro de chave desbalanceada no g++. A remoção
+    // segura da chave que fecha um main() manual agora é feita durante o parsing (veja
+    // 'is_manual_main_closing_brace' acima), então aqui já podemos injetar tudo direto.
     for (const auto& main_l : cpp_main_lines) {
-        std::string trimmed_l = trim(main_l);
-        if (trimmed_l == "}" || trimmed_l == "};") {
-            // Se for apenas uma chave fechando um bloco procedural solto, pulamos para evitar fechar a main antes da hora
-            continue;
-        }
         cpp_lines.push_back(main_l);
     }
 
