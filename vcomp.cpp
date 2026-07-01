@@ -6,7 +6,7 @@
 #include <cstdio> // Required for std::remove to clean up intermediate files
 
 // Compiler metadata
-const std::string COMPILER_VERSION = "0.2.2-beta";
+const std::string COMPILER_VERSION = "0.2.2-beta(bugfix-1)";
 const std::string COMPILER_NAME = "vcomp";
 
 /**
@@ -185,8 +185,35 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
-            if (content.find("+") != std::string::npos && content.find("\"") == std::string::npos) {
-                content = replace_all(content, "+", ",");
+            // FIX: a versão anterior só convertia '+' em ',' quando a linha NÃO tinha
+            // aspas — o que é o caso mais comum e mais quebrado (ex: pf "texto" + var).
+            // Agora percorremos a string caractere a caractere, respeitando o estado
+            // "dentro de aspas" (pra não mexer no '+' que é texto literal, tipo " + ")
+            // e a profundidade de parênteses (pra não quebrar expressões aritméticas
+            // como "(num1 + num2)"). Só convertemos '+' em ',' quando ele está fora de
+            // aspas e fora de parênteses — ou seja, quando é de fato um operador de
+            // concatenação entre argumentos do pf().
+            {
+                std::string transpiled_content;
+                bool inside_quotes = false;
+                int paren_depth = 0;
+                for (char c : content) {
+                    if (c == '"') {
+                        inside_quotes = !inside_quotes;
+                        transpiled_content += c;
+                    } else if (!inside_quotes && c == '(') {
+                        paren_depth++;
+                        transpiled_content += c;
+                    } else if (!inside_quotes && c == ')') {
+                        if (paren_depth > 0) paren_depth--;
+                        transpiled_content += c;
+                    } else if (c == '+' && !inside_quotes && paren_depth == 0) {
+                        transpiled_content += ',';
+                    } else {
+                        transpiled_content += c;
+                    }
+                }
+                content = transpiled_content;
             }
 
             current_target_vector.push_back(scope_indentation + leading_spaces + "pf(" + content + ");" + comment);
