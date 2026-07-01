@@ -44,9 +44,9 @@ Nova++ features automatic lazy type inference. You do not explicitly declare pri
 * String Literal: name = "SysKore"
 * Integer Number: score = 100
 * Boolean Flag: isActive = true
-``` plaintext
-> ⚠️ Syntax Warning: Never pass native C++ datatype prefixes (e.g., int x = 0;). Simply write x = 0. The double equal sign == is treated strictly as an evaluation operator and does not trigger variable initialization routines.
-```
+
+`> ⚠️ Syntax Warning: Never pass native C++ datatype prefixes (e.g., int x = 0;). Simply write x = 0. The double equal sign == is treated strictly as an evaluation operator and does not trigger variable initialization routines.`
+
 ---
 
 ## 🔀 Conditional Branching Structures
