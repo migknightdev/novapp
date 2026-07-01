@@ -3,9 +3,10 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdio> // Required for std::remove to clean up intermediate files
 
 // Compiler metadata
-const std::string COMPILER_VERSION = "0.1.8-alpha";
+const std::string COMPILER_VERSION = "0.1.95-alpha";
 const std::string COMPILER_NAME = "vcomp";
 
 /**
@@ -85,6 +86,7 @@ int main(int argc, char* argv[]) {
     cpp_lines.push_back("#include <iostream>");
     cpp_lines.push_back("#include <string>");
     cpp_lines.push_back("#include <cstdlib>");
+    cpp_lines.push_back("#include <clocale>"); // Required for UTF-8 character encoding support
     cpp_lines.push_back("\n// Variadic template helper for the 'pf' utility function");
     cpp_lines.push_back("template <typename... Args>");
     cpp_lines.push_back("void pf(Args... args) { (std::cout << ... << args) << \"\\n\"; }\n");
@@ -114,6 +116,7 @@ int main(int argc, char* argv[]) {
         if (line == "using noMain") {
             is_no_main = true;
             cpp_lines.push_back("int main() {");
+            cpp_lines.push_back("    std::setlocale(LC_ALL, \".UTF8\"); // Enforce UTF-8 runtime environment");
             continue;
         }
 
@@ -138,7 +141,6 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
-            // Convert string concatenation syntax to variadic arguments
             if (content.find("+") != std::string::npos && content.find("\"") == std::string::npos) {
                 content = replace_all(content, "+", ",");
             }
@@ -147,30 +149,67 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // 5. Transpile variable assignments and type inference (=)
-        size_t eq_pos = line.find("=");
-        if (eq_pos != std::string::npos && line.rfind("if", 0) != 0 && line.rfind("for", 0) != 0) {
-            std::string var_name = trim(line.substr(0, eq_pos));
-            std::string var_val = trim(line.substr(eq_pos + 1));
-            if (!var_val.empty() && var_val.back() == ';') var_val.pop_back();
+        // 5. Transpile input function 'input'
+        if (line.rfind("input ", 0) == 0) {
+            std::string var_target = line.substr(6);
+            if (!var_target.empty() && var_target.back() == ';') var_target.pop_back();
+            var_target = trim(var_target);
 
-            if (var_name.empty() || var_val.empty()) {
-                std::cerr << "[SYNTAX ERROR] Line " << current_line_num << ": Malformed variable assignment.\n";
+            if (var_target.empty()) {
+                std::cerr << "[SYNTAX ERROR] Line " << current_line_num << ": 'input' requires a target variable.\n";
                 std::cerr << " -> Statement: \"" << file_lines[i] << "\"\n";
                 return 1;
             }
 
-            bool is_digit = !var_val.empty() && std::all_of(var_val.begin(), var_val.end(), ::isdigit);
-            bool is_bool = (var_val == "true" || var_val == "false");
-            bool has_quotes = (!var_val.empty() && var_val.front() == '"' && var_val.back() == '"');
-
-            // Automatically deduce string literal formatting
-            if (!is_digit && !is_bool && !has_quotes && var_val.find_first_of("+-*/") == std::string::npos) {
-                var_val = "\"" + var_val + "\"";
-            }
-
-            cpp_lines.push_back("    auto " + var_name + " = " + var_val + ";" + comment);
+            cpp_lines.push_back("    std::cin >> " + var_target + ";" + comment);
             continue;
+        }
+
+        // 6. Transpile conditional structures (if, elif, else)
+        if (line.rfind("if ", 0) == 0 || line.rfind("if(", 0) == 0 || line.find("} if") != std::string::npos) {
+            cpp_lines.push_back("    " + line + comment);
+            continue;
+        }
+        if (line.find("elif") != std::string::npos) {
+            std::string translation = replace_all(line, "elif", "else if");
+            cpp_lines.push_back("    " + translation + comment);
+            continue;
+        }
+        if (line.find("else") != std::string::npos) {
+            cpp_lines.push_back("    " + line + comment);
+            continue;
+        }
+        if (line == "}") {
+            cpp_lines.push_back("    }" + comment);
+            continue;
+        }
+
+        // 7. Transpile variable assignments and type inference (=)
+        size_t eq_pos = line.find("=");
+        if (eq_pos != std::string::npos && line.rfind("if", 0) != 0 && line.rfind("elif", 0) != 0) {
+            std::string check_comparison = line.substr(eq_pos, 2);
+            if (check_comparison != "==") {
+                std::string var_name = trim(line.substr(0, eq_pos));
+                std::string var_val = trim(line.substr(eq_pos + 1));
+                if (!var_val.empty() && var_val.back() == ';') var_val.pop_back();
+
+                if (var_name.empty() || var_val.empty()) {
+                    std::cerr << "[SYNTAX ERROR] Line " << current_line_num << ": Malformed variable assignment.\n";
+                    std::cerr << " -> Statement: \"" << file_lines[i] << "\"\n";
+                    return 1;
+                }
+
+                bool is_digit = !var_val.empty() && std::all_of(var_val.begin(), var_val.end(), ::isdigit);
+                bool is_bool = (var_val == "true" || var_val == "false");
+                bool has_quotes = (!var_val.empty() && var_val.front() == '"' && var_val.back() == '"');
+
+                if (!is_digit && !is_bool && !has_quotes && var_val.find_first_of("+-*/") == std::string::npos) {
+                    var_val = "\"" + var_val + "\"";
+                }
+
+                cpp_lines.push_back("    auto " + var_name + " = " + var_val + ";" + comment);
+                continue;
+            }
         }
 
         // Append standard syntax safely
@@ -208,5 +247,13 @@ int main(int argc, char* argv[]) {
     }
     
     std::cout << "[VCOMP] Compilation successful. Binary generated: '" << binary_name << "'\n";
+
+    // Clean up: Delete the intermediate .cpp file now that binary is ready
+    if (std::remove(output_filename.c_str()) != 0) {
+        std::cerr << "[WARNING] Failed to clean up intermediate file: " << output_filename << "\n";
+    } else {
+        std::cout << "[VCOMP] Cleaned up intermediate source: " << output_filename << "\n";
+    }
+
     return 0;
 }
