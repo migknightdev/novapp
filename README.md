@@ -1,3 +1,5 @@
+![Views](https://komarev.com/ghvc/?username=migknightdev&color=blue)
+
 # Nova++ Toolchain (`vcomp`) 🚀
 
 A lightweight, custom programming language transpiler and compiler toolchain written in **C++17**. `vcomp` parses Nova++ source files (`.nvpp`), automatically injects standard boilerplate, manages lazy type deduction, processes custom scopes, and invokes `g++` to generate high-performance native binaries.
