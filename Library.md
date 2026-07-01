@@ -1,4 +1,4 @@
-# 📚 Standard Library & Syntax Specification: Nova++ (v0.1.9-alpha)
+# 📚 Standard Library & Syntax Specification: Nova++ (v0.2.2-beta)
 
 Welcome to the official documentation for the Nova++ programming language. The vcomp compiler operates as a high-performance transpiler that converts .nvpp source files into native standard C++17, automatically handling compilation downstream to generate fast executable binaries.
 
@@ -10,8 +10,34 @@ Every Nova++ application utilizing the streamlined script layout must declare th
 
 | Directive | Description | C++ Equivalent Under the Hood |
 | :--- | :--- | :--- |
-| #include <nova> | Ingests essential macros and foundational standard components. | Injects <iostream>, <string>, <cstdlib> |
+| #include <nova> | Ingests essential macros and foundational standard components. Mandatory — compilation aborts if missing. | Injects <iostream>, <string>, <cstdlib>, <clocale> |
 | using noMain | Bypasses the requirement of writing manual main function scopes. | int main() { ... } |
+
+---
+
+## 🧩 Procedural Functions
+
+Nova++ supports reusable blocks of code declared with the `func` keyword. Functions are transpiled into standalone global-scope `void` functions in C++, keeping definition logic cleanly separated from your script's execution flow.
+
+* Syntax:
+  ```nvpp
+  func <name>()
+  {
+      <body>
+  }
+  ```
+* C++ Equivalent Under the Hood: `void <name>() { ... }`
+* Example:
+  ```nvpp
+  func greet()
+  {
+      pf "Hello from a function!"
+  }
+
+  greet()
+  ```
+
+`> ⚠️ Syntax Note: Calls to your functions (e.g. greet()) must be placed outside the function body, at the script's root level, so they execute inside the generated main().`
 
 ---
 
@@ -26,6 +52,7 @@ Outputs data directly to the terminal standard output. It natively supports stri
   pf "Hello World!"
   pf "The result is: " + (3 + 5)
   ```
+
 ### input
 Captures user terminal input and maps it safely into an existing variable. Rule: The target variable must be initialized prior to calling input to ensure strict static type deduction at compile time.
 
@@ -35,6 +62,7 @@ Captures user terminal input and maps it safely into an existing variable. Rule:
   username = ""
   input username
   ```
+
 ---
 
 ## 📦 Variable Allocation & Lazy-Type Deduction
@@ -51,7 +79,7 @@ Nova++ features automatic lazy type inference. You do not explicitly declare pri
 
 ## 🔀 Conditional Branching Structures
 
-Conditional blocks direct the processing flow based on logical boolean evaluations. The parser uses standard curly braces {} to define localized scopes.
+Conditional blocks direct the processing flow based on logical boolean evaluations. The parser uses standard curly braces {} to define localized scopes, including compact forms such as `} elif (...) {` and `} else {` on a single line.
 
 | Nova++ Structure | C++ Translation | Execution Scope |
 | :--- | :--- | :--- |
@@ -60,24 +88,30 @@ Conditional blocks direct the processing flow based on logical boolean evaluatio
 | else { | else { | Catch-all block; executes if all preceding evaluations fail. |
 | } | } | Terminates the current active conditional evaluation block. |
 
-### Complete Flow Example:
+### Complete Flow Example (inside a function):
 ```nvpp
 #include <nova>
 using noMain
 
-pf "Enter your current age:"
-userAge = 0
-input userAge
+func checkAge()
+{
+    pf "Enter your current age:"
+    userAge = 0
+    input userAge
 
-if (userAge >= 18) {
-    pf "Access granted."
-} elif (userAge == 17) {
-    pf "Access denied. One more year to go!"
-} else {
-    pf "Access strictly denied."
+    if (userAge >= 18) {
+        pf "Access granted."
+    } elif (userAge == 17) {
+        pf "Access denied. One more year to go!"
+    } else {
+        pf "Access strictly denied."
+    }
 }
+
+checkAge()
 exit 0
 ```
+
 ---
 
 ## ⚙️ Process & Flow Control
@@ -89,17 +123,27 @@ Immediately terminates program execution and passes an exit status code back to 
 * Example:
   `exit 0 // Successful program execution termination`
 
+`> ⚠️ Platform Note: The pause routine relies on the Windows system("pause") command and has no effect on non-Windows environments.`
+
+---
+
+## 🌐 Native UTF-8 Encoding
+
+Every compiled program automatically enforces a UTF-8 locale at runtime (`std::setlocale(LC_ALL, ".UTF8")`), so accented characters and special symbols (e.g., `ç`, `ã`, `é`) render correctly in the console without any extra configuration on your part.
+
 ---
 
 ## 🛠️ Command-Line Interface (CLI) Compilation
 
 To compile a Nova++ program, invoke the custom vcomp executable binary from your command line interface, passing your target source script file as an argument:
 
-# Transpiles and compiles your source script down to a native binary
 ```bash
+# Transpiles and compiles your source script down to a native binary
 vcomp game.nvpp
 ```
 ```bash
 # Outputs current installed compiler environment metadata
 vcomp --version
 ```
+
+Under the hood, `vcomp` transpiles your `.nvpp` file into an intermediate `game.cpp`, invokes `g++` to produce the native binary, and automatically deletes the intermediate `.cpp` file once compilation succeeds.
