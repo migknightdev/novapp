@@ -22,17 +22,19 @@ Outputs data directly to the terminal standard output. It natively supports stri
 
 * Syntax: pf <content>
 * Example:
+  ```nvpp
   pf "Hello World!"
   pf "The result is: " + (3 + 5)
-
+  ```
 ### input
 Captures user terminal input and maps it safely into an existing variable. Rule: The target variable must be initialized prior to calling input to ensure strict static type deduction at compile time.
 
 * Syntax: input <target_variable>
 * Example:
+  ```nvpp
   username = ""
   input username
-
+  ```
 ---
 
 ## 📦 Variable Allocation & Lazy-Type Deduction
@@ -42,9 +44,9 @@ Nova++ features automatic lazy type inference. You do not explicitly declare pri
 * String Literal: name = "SysKore"
 * Integer Number: score = 100
 * Boolean Flag: isActive = true
-
+``` plaintext
 > ⚠️ Syntax Warning: Never pass native C++ datatype prefixes (e.g., int x = 0;). Simply write x = 0. The double equal sign == is treated strictly as an evaluation operator and does not trigger variable initialization routines.
-
+```
 ---
 
 ## 🔀 Conditional Branching Structures
@@ -59,6 +61,7 @@ Conditional blocks direct the processing flow based on logical boolean evaluatio
 | } | } | Terminates the current active conditional evaluation block. |
 
 ### Complete Flow Example:
+```nvpp
 #include <nova>
 using noMain
 
@@ -73,7 +76,8 @@ if (userAge >= 18) {
 } else {
     pf "Access strictly denied."
 }
-
+exit 0
+```
 ---
 
 ## ⚙️ Process & Flow Control
@@ -81,9 +85,9 @@ if (userAge >= 18) {
 ### exit
 Immediately terminates program execution and passes an exit status code back to the underlying operating system. The compiler automatically hooks a system native pause routine (system("pause")) prior to termination to prevent the terminal window from closing unexpectedly.
 
-* Syntax: exit <return_code>
+* Syntax: `exit <return_code>`
 * Example:
-  exit 0 // Successful program execution termination
+  `exit 0 // Successful program execution termination`
 
 ---
 
@@ -92,7 +96,10 @@ Immediately terminates program execution and passes an exit status code back to 
 To compile a Nova++ program, invoke the custom vcomp executable binary from your command line interface, passing your target source script file as an argument:
 
 # Transpiles and compiles your source script down to a native binary
+```bash
 vcomp game.nvpp
-
+```
+```bash
 # Outputs current installed compiler environment metadata
 vcomp --version
+```
